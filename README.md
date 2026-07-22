@@ -6,6 +6,7 @@
 This project simulates a real-world data consultancy scenario at SteamScope Analytics, a fictional gaming analytics firm that advises indie game studios on pricing strategy. The objective was to audit an inherited data pipeline for hidden quality issues, diagnose how those issues broke statistical assumptions, and rebuild the pipeline and pricing model using best practices.
 
 The project involved reverse-engineering an existing analytics workflow, auditing it against data integrity principles, running formal regression diagnostics, and rebuilding the pipeline and model end-to-end.
+**Full Report:** [View PDF Report](steam_game_pricing_analysis.pdf)
 
 ## Business Scenario
 
