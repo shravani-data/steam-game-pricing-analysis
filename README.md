@@ -1,4 +1,5 @@
-# SteamScope Pricing Analysis: Auditing and Rebuilding a Flawed Data Pipeline
+# SteamScope Pricing Analysis
+#### Auditing and Rebuilding a Flawed Data Pipeline
 
 ## Overview
 
@@ -21,26 +22,26 @@ The analysis focused on answering key questions:
 
 ## Analytical Workflow
 
-### 1. Legacy Pipeline Reconstruction
+#### 1. Legacy Pipeline Reconstruction
 - Reverse-engineered the original cleaning pipeline using reproducible tidyverse workflows.
 - Verified the reconstructed dataset matched the legacy output exactly.
 
-### 2. Data Quality Audit
+#### 2. Data Quality Audit
 Identified issues including:
 - Incorrect unit conversion
 - Arbitrary price capping
 - Missing data handling bias
 - Incorrect categorical variable encoding
 
-### 3. Model Diagnostics
+#### 3. Model Diagnostics
 - Applied residual diagnostics to evaluate regression assumptions.
 - Identified how data manipulation affected model reliability.
 
-### 4. Pipeline Rebuild & Modelling
+#### 4. Pipeline Rebuild & Modelling
 - Developed a corrected Version 2.0 pipeline.
 - Improved feature handling and refitted the pricing model.
 
-### 5. Business Insights
+#### 5. Business Insights
 - Improved model explanatory power from R² = 0.049 to R² = 0.310.
 - Identified significant pricing drivers including genre, review sentiment, player popularity, and platform availability.
   
@@ -72,4 +73,4 @@ Identified issues including:
 
 ## Project Context
 
-This project was developed as part of postgraduate Data Analytics coursework at Monash University and structured as a professional analytics case study.
+This project was developed as part of postgraduate Business Analytics coursework at Monash University and structured as a professional analytics case study.
