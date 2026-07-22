@@ -1,0 +1,332 @@
+---
+title: "SteamScope Pricing Analysis"
+subtitle: "Auditing and Rebuilding a Flawed Data Pipeline"
+author: "Shravani Jadhav"
+format: 
+  html:
+    theme: cosmos
+  pdf: default
+
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# **Introduction**
+
+This project analyses SteamScope game pricing patterns by auditing an existing data pipeline and rebuilding it using data analytics best practices. The analysis involves reverse-engineering a legacy cleaning process, identifying data quality issues, improving the workflow, and developing a regression model to understand factors influencing game prices.
+
+# **Part A: Forensic Data Wrangling**
+
+## A1: Exploratory Data Analysis
+
+```{r}
+library(tidyverse)
+library(lubridate)
+
+raw    <- read_csv("data/raw_steam_games_v03.csv", show_col_types = FALSE)
+legacy <- read_csv("data/legacy_clean_v03.csv", show_col_types = FALSE)
+
+
+dim(raw)
+dim(legacy)
+str(raw)
+str(legacy)
+names(raw)
+names(legacy)
+
+summary(raw)
+summary(legacy)
+
+```
+
+## A2: Reconstructing Avery's Pipeline
+
+```{r}
+
+student_clean <- raw |>
+  
+  # Step 1: Remove rows with zero price
+  filter(price > 0) |>
+  
+  # Step 2: Remove rows with zero reviews
+  filter(total_reviews > 0) |>
+  
+  # Step 3: Remove rows with NA values in metacritic or developer_bio
+  filter(!is.na(metacritic_score), !is.na(developer_bio)) |>
+  
+  # Step 4: Parse release_date and extract components
+  mutate(
+    release_date  = dmy(release_date),
+    release_day   = day(release_date),
+    release_month = month(release_date, label = TRUE, abbr = TRUE),
+    release_year  = year(release_date)
+  ) |>
+  
+  # Step 5: Change datatype of release_month
+  mutate(release_month = as.character(release_month)) |>
+  
+  # Step 6: Standardise developer name to title case
+  mutate(developer = str_to_title(developer)) |>
+  
+  # Step 7: Remove columns not in legacy
+  select(-name, -release_date, -developer_bio) |>
+  
+  # Step 8: Count developer titles (within cleaned dataset)
+  add_count(developer, name = "dev_titles") |>
+  
+  # Step 9: Create pt_hrs (Avery divided by 100, not 60 — reproducing the bug)
+  mutate(pt_hrs = avg_playtime_mins / 100) |>
+  
+  # Step 10: Create lpeak = log(peak_players), rounded to 2dp
+  mutate(lpeak = round(log(peak_players), 2)) |>
+  
+  # Step 11: Round positive_ratio to integer
+  mutate(positive_ratio = round(positive_ratio, 0) |> as.integer()) |>
+  
+  # Step 12: Cap price at $40, then round to 2 decimal places
+  mutate(price = round(pmin(price, 40), 2)) |>
+ 
+  
+  # Step 13: Reorder columns to match legacy exactly
+  select(appid, developer, release_day, release_month, release_year,
+         genre, genre_code, price, total_reviews, positive_ratio,
+         avg_playtime_mins, peak_players, metacritic_score, platforms,
+         pt_hrs, lpeak, dev_titles)
+  
+
+view(student_clean)
+
+# Verify
+all.equal(as.data.frame(student_clean), as.data.frame(legacy))
+
+```
+
+## A3: The Legacy Model
+
+```{r}
+# Use the same variables as Avery
+# Data object is named 'df' to match Avery's model
+
+df <- student_clean
+
+legacy_model <- lm(formula = price ~ genre_code + total_reviews + positive_ratio+ pt_hrs + peak_players + platforms, data = df)
+
+summary(legacy_model)
+
+```
+
+## A4: The Legacy Plot
+
+```{r}
+# Recreate Avery's plot exactly — including all intentional flaws:
+# 1. Facets ordered alphabetically by release_month (not calendar order)
+# 2. genre_code treated as continuous for colour gradient (not factor)
+# 3. $40 price cap is visible in output
+
+ggplot(student_clean, aes(x = total_reviews, y = price, colour = genre_code)) +
+  
+  geom_point(alpha = 0.6, size = 1.2) +
+  
+  geom_smooth(method = "lm", se = FALSE, colour = "blue", linewidth = 0.8) +
+  
+  facet_wrap(~ release_month) +
+  
+  scale_colour_gradient(low = "darkblue", high = "lightblue", name = "Genre Code") +
+  
+  labs(
+    title    = "SteamScope Quarterly Report \u2014 Seed 3",
+    subtitle = "Price vs Community Size by Release Month",
+    x        = "Total Reviews",
+    y        = "Price (USD)"
+  ) +
+  
+  theme_bw()
+```
+
+------------------------------------------------------------------------
+
+# **Part B: The Critique & “Version 2.0” Fix**
+
+To: Managing Director, SteamScope Analytics\
+From: Shravani Jadhav\
+Re: Auditing and Fixing of Data Pipeline
+
+After analyzing the data and auditing Avery’s pipeline, we found the bad decisions she took, while not all were wrong, it was important to fix the pipeline. We ran a diagnostic check to understand how Avery’s data manipulations actively violated linear regression assumptions. We then cleaned and rebuilt the dataset properly by fixing the errors made by Avery and created a clean pipeline. We also built a new V2 model and plot and concluded by interpreting the model.
+
+## B1: The Audit
+
+After careful examination of the data wrangling process implemented by Avery, I have discovered six bad practices. Not all steps are necessarily incorrect, like removing games with zero prices and zero reviews, date parsing, capitalizing the developers names, and calculating the log of peak players are all reasonable choices. The six errors which break the rules of good data science are given below.
+
+**Error 1: Playtime divided by 100 instead of 60**
+
+Avery knowingly divided avg_playtime_mins by 100 instead of 60 for converting minutes into hours. This creates an error of unit conversion and goes against the data integrity principle – computed columns should match reality in their value. As a result, all the values of playtime in the dataset are understated by approximately 40%. Any model for pricing based on this data, as well as any report to a client, would draw wrong conclusions regarding the relationship between player engagement and price.
+
+**Error 2: Price arbitrarily capped at \$40**
+
+By using the pmin() function to force all prices greater than \$40 to the value of \$40, Avery arbitrarily truncated the top end of the price distribution without explanation, contrary to the representativeness principle that data should capture reality rather than a arbitrary limit. Out of 752 games in the cleaned dataset, 600+ were artificially set to \$40, leaving the dependent variable with essentially no variation. As a result, the regression was useless, and SteamScope underestimated consumer demand for premium games by a significant amount.
+
+**Error 3: Rows deleted based on missing metacritic_score**
+
+By using ‘na.rm=TRUE’ in filter criteria, Avery excluded all rows for which metacritic_score had a missing value. Over 430 paid games were removed from the data in this way. Most indie games do not receive any ratings on Metacritic, so this is not a data issue, it just means the indie games are less popular. By removing these rows systematic sampling bias is introduced, violating the principle of representativeness. Because of this, SteamScope failed to analyze those indie games that most needed their help.
+
+**Error 4: Rows deleted based on missing developer_bio**
+
+There was no need to delete the rows with developer_bio NA values as that column was unncessary and was anyways going to be dropped. This introduces further sampling bias with no business justification. So Avery did this on purpose to create confusion. However, whole studio and all its games could be left out altogether, messing up the distribution in the study.
+
+**Error 5: Kept genre_code as numeric**
+
+The problem here is that instead of converting this variable into a factor, Avery uses it as a numeric one. In other words, genre_code variable is treated linearly, which is incorrect since genres can be considered as categories and do not have a linear dependence. Consequently, this causes an additional error and a biased result.
+
+**Error 6: Converted release_month to character**
+
+Avery converted release_month into character using ‘as.character(release_month)’, destroying its ordered structure. This meant that months were sorted alphabetically instead of chronologically during visualization and plotting. Due to this, seasonal trends in pricing and release patterns became harder to interpret data lost is structure.
+
+## B2: The Diagnostic Check
+
+```{r}
+library(ggResidpanel)
+
+# Run residual diagnostic panel on the legacy model
+resid_panel(legacy_model, plots = "all", smoother = TRUE)
+
+```
+
+The residual diagnosticsshows that the legacy model violates essential assumptions for linear regression. The Q-Q plot reveals a large deviation from the diagonal, especially on the right side, implying that the distribution of residuals is not normally distributed. This makes sense due to the \$40 error, where any prices exceeding \$40 would be rounded down to \$40, which caused a spike in the residuals around the ceiling. In addition, a fan shape can be seen in the residual plot, indicating heteroscedasticity, thus breaking another essential assumption of linear regression models, mainly due to the inability to predict values beyond \$40.
+
+Avery’s data manipulations lead to these problems. The \$40 price cap created a ceiling effect, which compressed the response variable and distorted the residual distribution and variance. Since the genre_code is a categoric variable but is modeled as a numeric one, the model used one regression line for an intrinsically categorical variable. As such, there will be structured misfit within the residuals, because genres with different price categories have been lumped up together to give rise to greater residual variances. Dividing by 100 rather than 60 results in a scaling problem of around 40%. Although there is no direct regression violation here, the pt_hrs coefficient becomes meaningless, making any business conclusion drawn from it invalid.
+
+## B3: The Fix – Version 2.0
+
+### Step 1: Build best_practice_clean
+
+```{r}
+best_practice_clean <- raw |>
+
+  # Remove rows with zero price (same as Avery — correct)
+  filter(price > 0) |>
+
+  # Remove rows with zero reviews (same as Avery — correct)
+  filter(total_reviews > 0) |>
+
+  # FIX — Replace NA metacritic_score values with 0 to retain these rows
+  mutate(metacritic_score = replace_na(metacritic_score, 0)) |>
+
+  # FIX - Parse release_date and extract components and dont convert to character 
+  mutate(
+    release_date  = dmy(release_date),
+    release_day   = day(release_date),
+    release_month = month(release_date, label = TRUE, abbr = TRUE),
+    release_year  = year(release_date)
+  ) |>
+
+  # Standardise developer name to title case
+  mutate(developer = str_to_title(developer)) |>
+
+  # Remove columns not needed
+  select(-name, -release_date, -developer_bio) |>
+
+  # Count developer titles
+  add_count(developer, name = "dev_titles") |>
+
+  # FIX — Convert minutes to hours by dividing by 60
+  mutate(pt_hrs = round(avg_playtime_mins / 60, 2)) |>
+
+  # Create lpeak = log(peak_players), rounded to 2dp
+  mutate(lpeak = round(log(peak_players), 2)) |>
+
+  # Round positive_ratio to integer
+  mutate(positive_ratio = round(positive_ratio, 0) |> as.integer()) |>
+
+  # FIX — Remove arbitrary price cap entirely
+  mutate(price = round(price, 2)) |>
+
+  # FIX — Convert genre_code to factor
+  mutate(genre_code = factor(genre_code)) |>
+
+  # Reorder columns cleanly
+  select(appid, developer, release_day, release_month, release_year,
+         genre, genre_code, price, total_reviews, positive_ratio,
+         avg_playtime_mins, peak_players, metacritic_score, platforms,
+         pt_hrs, lpeak, dev_titles)
+
+# Check
+view(best_practice_clean)
+glimpse(best_practice_clean)
+
+```
+
+### Step 2: Explore Before Modelling
+
+```{r}
+library(GGally)
+
+# Explore predictor relationships before fitting the model
+best_practice_clean |>
+  select(price, genre_code, total_reviews, positive_ratio,
+         pt_hrs, peak_players, platforms) |>
+  ggpairs(
+    title   = "V2.0 — Predictor Relationships Before Modelling",
+    mapping = aes(alpha = 0.3, colour = genre_code)
+  )
+```
+
+### Step 3: Fit V2 Model and Compare to Legacy
+
+```{r}
+# Fit legacy model on student_clean
+df <- student_clean
+legacy_model <- lm(price ~ genre_code + total_reviews + positive_ratio +
+                     pt_hrs + peak_players + platforms, data = df)
+
+# Fit V2 model on best_practice_clean
+# genre_code is now a factor
+v2_model <- lm(price ~ genre_code + total_reviews + positive_ratio +
+                 pt_hrs + peak_players + platforms,
+               data = best_practice_clean)
+
+# Compare
+summary(legacy_model)
+summary(v2_model)
+```
+
+### Step 4: Polished V2 Plot
+
+```{r}
+#Create V2 plot
+best_practice_clean |>
+  ggplot(aes(x = total_reviews, y = price)) +
+
+  geom_point(aes(colour = price), alpha = 0.5, size = 1.2) +
+
+  geom_smooth(method = "lm", se = FALSE, aes(group = 1), linewidth = 0.8) +
+
+  facet_wrap(~ release_month) +
+
+  scale_colour_viridis_c() +
+
+  labs(
+    title    = "SteamScope V2.0 — Price vs Community Size by Release Month",
+    subtitle = "Fixed pipeline: correct units, no price cap",
+    x        = "Total Reviews",
+    y        = "Price (USD)"
+  ) +
+
+  theme_minimal() +
+  theme(strip.text = element_text(face = "bold"))
+```
+
+## B4: Model Interpretation
+
+Genre 2 has the highest prices, of approximately \$8.99 higher than the base genre, followed by Genre 3 (+\$6.69) and Genre 4 (+\$3.47). Genre 5 has the lowest prices, of about \$3.93 lower than the base genre. This shows clearly different prices depending on genre, where some have been classified as high-end genres while others low-budget ones.
+
+From the regression output above, we saw that the predictors genre, positive_ratio, peak_players, and platforms were significant predictors at p-value \< 0.05. Therefore, game pricing is mainly dependent on factors like quality perception (positive reviews), popularity (peak players), distribution channels (platforms) and genre of the game. Whereas, total_reviews and playtime hours are not significant, meaning only engagement volume does not impact pricing decisions for developers.
+
+R² coefficient of 0.31 means that the model explains about 31 percent of the game price variation. While the model provides information regarding important factors of the game price, a significant percentage of variation is yet to be explained due to other factors such as brand reputation and marketing strategy.
+
+# **Conclusion**
+
+This analysis successfully reconstructed SteamScope’s original pricing pipeline, identified critical data quality issues, and developed an improved Version 2.0 workflow following data analytics best practices. The audit demonstrated that several transformation decisions in the original pipeline reduced model reliability by introducing data distortion, sampling bias, and incorrect variable handling. After correcting these issues, the improved model provided a more reliable understanding of the factors associated with game pricing, increasing explanatory power from R² = 0.049 to R² = 0.310.
+
+The findings suggest that pricing decisions are influenced by factors such as game genre, player engagement, review sentiment, and platform availability. However, the model still explains only part of the variation in pricing, indicating that additional factors such as brand strength, marketing strategy, and market positioning should be considered before making final pricing recommendations. Overall, this project highlights the importance of reproducible data pipelines, data quality validation, and statistically sound modelling in producing trustworthy business insights.
