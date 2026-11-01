@@ -1,7 +1,2 @@
 # Tell GitHub that .qmd is executable R code
 *.qmd linguist-language=R
-*.qmd linguist-detectable=true
-
-# Ignore the generated web files
-*.html linguist-detectable=false
-*.js linguist-detectable=false
